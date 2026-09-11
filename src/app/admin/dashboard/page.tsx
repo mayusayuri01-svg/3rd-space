@@ -12870,7 +12870,9 @@ function CrewTab({
 
   useEffect(() => {
     fetchMyOrders();
-    const id = setInterval(fetchMyOrders, 45000);
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") fetchMyOrders();
+    }, 45000);
     return () => clearInterval(id);
   }, [staffName]);
 
@@ -13035,15 +13037,17 @@ function CrewTab({
       (orderType === "delivery" ? cartTotal + deliveryFee : cartTotal) +
       othersTotal;
 
+    const hasItemsOrCharges = cart.length > 0 || othersCharges.length > 0;
+
     if (orderType === "dine-in") {
-      if ((!tableNumber.trim() && !customerName.trim()) || cart.length === 0)
+      if ((!tableNumber.trim() && !customerName.trim()) || !hasItemsOrCharges)
         return;
     } else {
       if (
         !customerName.trim() ||
         !deliveryAddress.trim() ||
         !deliveryFeeInput.trim() ||
-        cart.length === 0
+        !hasItemsOrCharges
       )
         return;
     }
@@ -14026,7 +14030,7 @@ function CrewTab({
                     : !customerName.trim() ||
                       !deliveryAddress.trim() ||
                       !deliveryFeeInput.trim()) ||
-                  cart.length === 0 ||
+                  (cart.length === 0 && othersCharges.length === 0) ||
                   submitting
                 }
                 style={{
@@ -14037,7 +14041,8 @@ function CrewTab({
                       ? tableNumber.trim() || customerName.trim()
                       : customerName.trim() &&
                         deliveryAddress.trim() &&
-                        deliveryFeeInput.trim()) && cart.length > 0
+                        deliveryFeeInput.trim()) &&
+                    (cart.length > 0 || othersCharges.length > 0)
                       ? T.gold
                       : "rgba(212,168,67,0.25)",
                   color:
@@ -14045,7 +14050,8 @@ function CrewTab({
                       ? tableNumber.trim() || customerName.trim()
                       : customerName.trim() &&
                         deliveryAddress.trim() &&
-                        deliveryFeeInput.trim()) && cart.length > 0
+                        deliveryFeeInput.trim()) &&
+                    (cart.length > 0 || othersCharges.length > 0)
                       ? "#0a0f0a"
                       : T.muted,
                   border: "none",
@@ -14056,7 +14062,7 @@ function CrewTab({
                   fontWeight: 700,
                   cursor:
                     (tableNumber.trim() || customerName.trim()) &&
-                    cart.length > 0
+                    (cart.length > 0 || othersCharges.length > 0)
                       ? "pointer"
                       : "not-allowed",
                   display: "flex",
@@ -17567,7 +17573,8 @@ export default function AdminDashboard() {
       // Single combined call — was 4 separate serverless invocations
       // (orders, shop-status, menu, cash-log) every poll tick. See
       // /api/dashboard-poll for why they're now folded into one request.
-      const res = await fetch("/api/dashboard-poll");
+      const needsMenu = tab === "crew" || tab === "menu";
+      const res = await fetch(`/api/dashboard-poll?menu=${needsMenu ? 1 : 0}`);
       if (!res.ok) throw new Error(`dashboard-poll ${res.status}`);
       const {
         orders: fetched,
@@ -17576,8 +17583,9 @@ export default function AdminDashboard() {
         cashLog,
       } = await res.json();
 
-      // Always update menu so availability changes show without a hard reload
-      setMenuItems(fetchedMenu);
+      // Only update if this poll actually asked for menu data (see needsMenu
+      // above) — otherwise keep whatever's already in state.
+      if (fetchedMenu) setMenuItems(fetchedMenu);
       setLiveCashLog(cashLog);
 
       if (!silent) {

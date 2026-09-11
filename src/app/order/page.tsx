@@ -2655,8 +2655,9 @@ function MenuScreen({
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns:
-                        "repeat(auto-fill,minmax(min(100%,clamp(140px,40vw,260px)),1fr))",
+                      gridTemplateColumns: isDesktop
+                        ? "repeat(auto-fill,minmax(min(100%,clamp(140px,40vw,260px)),1fr))"
+                        : "1fr",
                       gap: "clamp(10px,2.5vw,14px)",
                     }}
                   >
@@ -2736,8 +2737,9 @@ function MenuScreen({
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns:
-                          "repeat(auto-fill,minmax(min(100%,clamp(140px,40vw,260px)),1fr))",
+                        gridTemplateColumns: isDesktop
+                          ? "repeat(auto-fill,minmax(min(100%,clamp(140px,40vw,260px)),1fr))"
+                          : "1fr",
                         gap: "clamp(10px,2.5vw,14px)",
                       }}
                     >
@@ -3729,7 +3731,7 @@ function DeliveryAddressPicker({
 }
 
 // ── TABLE PICKER ───────────────────────────────────────────────────────────
-const TOTAL_TABLES = 5; // change to however many tables you have
+const TOTAL_TABLES = 20; // change to however many tables you have
 
 function TablePicker({
   value,
@@ -3742,15 +3744,14 @@ function TablePicker({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/orders?status=pending")
+    // One call instead of 4 — filter client-side by the active statuses
+    // instead of hitting /api/orders separately per status.
+    fetch("/api/orders")
       .then((r) => r.json())
-      .then(async (pending: any[]) => {
-        const [confirmed, preparing, ready] = await Promise.all([
-          fetch("/api/orders?status=confirmed").then((r) => r.json()),
-          fetch("/api/orders?status=preparing").then((r) => r.json()),
-          fetch("/api/orders?status=ready").then((r) => r.json()),
-        ]);
-        const active = [...pending, ...confirmed, ...preparing, ...ready];
+      .then((all: any[]) => {
+        const active = all.filter((o) =>
+          ["pending", "confirmed", "preparing", "ready"].includes(o.status),
+        );
         const tables = new Set(
           active.map((o) => String(o.tableNumber)).filter(Boolean),
         );
@@ -3846,7 +3847,7 @@ function TablePicker({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
+              gridTemplateColumns: "repeat(5, 1fr)",
               gap: 8,
             }}
           >
@@ -6788,12 +6789,21 @@ export default function OrderPage() {
       .then((d) => setShopOpen(d.open))
       .catch(() => {});
 
+    // Skip the poll entirely while the tab is backgrounded (phone locked,
+    // switched tabs) — a customer isn't watching shop-status change in
+    // real time, so there's no reason to burn a serverless invocation
+    // every 45s for a tab nobody's looking at.
     const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       fetch("/api/shop-status")
         .then((r) => r.json())
         .then((d) => setShopOpen(d.open))
         .catch(() => {});
-    }, 30000);
+      // Re-check the menu too, on a slower cadence, so a customer whose
+      // /order tab has been open a while doesn't keep seeing an item
+      // staff already 86'd — otherwise they only find out at checkout.
+      fetchMenu();
+    }, 45000);
 
     return () => clearInterval(interval);
   }, []);

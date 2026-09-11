@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
 
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+  const includeMenu = req.nextUrl.searchParams.get("menu") !== "0";
+
   const [orders, shopDoc, menuItems] = await Promise.all([
     Order.find({
       archived: { $ne: true },
@@ -43,7 +45,12 @@ export async function GET(req: NextRequest) {
       .sort({ createdAt: -1 })
       .lean(),
     Setting.findOne({ key: "shopStatus" }).lean(),
-    MenuItem.find().sort({ category: 1, createdAt: 1 }).lean(),
+    // Skip this query entirely when the polling tab (Orders, Analytics,
+    // etc.) doesn't need menu data — e.g. a kitchen tablet parked on
+    // Orders all shift was pulling the full menu every 25s for nothing.
+    includeMenu
+      ? MenuItem.find().sort({ category: 1, createdAt: 1 }).lean()
+      : Promise.resolve(null),
   ]);
 
   const doc = shopDoc as any;
@@ -60,7 +67,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     orders,
-    menuItems,
+    menuItems: menuItems ?? undefined,
     shopStatus: {
       open: doc?.open ?? false,
       openedAt: doc?.openedAt ?? null,
