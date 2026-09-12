@@ -17001,6 +17001,15 @@ export default function AdminDashboard() {
   const isSmall = w < 400;
 
   const [tab, setTab] = useState<Tab>("orders");
+  // The poll effect below only depends on [role] (so the interval isn't
+  // torn down/recreated every tab switch) — but that means fetchData's
+  // closure would otherwise freeze on whatever `tab` was at mount time
+  // forever. Reading through this ref instead keeps needsMenu accurate
+  // on every poll tick regardless of which tab is active right now.
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17573,7 +17582,7 @@ export default function AdminDashboard() {
       // Single combined call — was 4 separate serverless invocations
       // (orders, shop-status, menu, cash-log) every poll tick. See
       // /api/dashboard-poll for why they're now folded into one request.
-      const needsMenu = tab === "crew" || tab === "menu";
+      const needsMenu = tabRef.current === "crew" || tabRef.current === "menu";
       const res = await fetch(`/api/dashboard-poll?menu=${needsMenu ? 1 : 0}`);
       if (!res.ok) throw new Error(`dashboard-poll ${res.status}`);
       const {
