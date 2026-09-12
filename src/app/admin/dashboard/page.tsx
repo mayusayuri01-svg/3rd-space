@@ -2730,6 +2730,31 @@ function EditOrderItemsModal({
   function removeItem(idx: number) {
     setItems((p) => p.filter((_, i) => i !== idx));
   }
+  // Lets admins add/edit the descriptive label on an "Others" line item
+  // directly in the order (e.g. turning a bare "Others" into "Others
+  // (container fee)") without retyping the whole line as a menu item.
+  const isOthersItem = (name: string) => /^others\b/i.test(name.trim());
+  const othersLabelOf = (name: string) => {
+    const m = name.match(/^others\s*\((.*)\)\s*$/i);
+    return m ? m[1] : "";
+  };
+  const [editingItemIdx, setEditingItemIdx] = useState<number | null>(null);
+  const [editingItemLabel, setEditingItemLabel] = useState("");
+  function startEditItemLabel(idx: number, currentName: string) {
+    setEditingItemIdx(idx);
+    setEditingItemLabel(othersLabelOf(currentName));
+  }
+  function commitItemLabel(idx: number) {
+    const label = editingItemLabel.trim();
+    setItems((p) =>
+      p.map((it, i) =>
+        i === idx
+          ? { ...it, name: label ? `Others (${label})` : "Others" }
+          : it,
+      ),
+    );
+    setEditingItemIdx(null);
+  }
   function addMenuItem(mi: MenuItem) {
     setItems((p) => {
       const existingIdx = p.findIndex((it) => it.name === mi.name);
@@ -2910,18 +2935,59 @@ function EditOrderItemsModal({
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p
-                  style={{
-                    color: T.cream,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {it.name}
-                </p>
+                {editingItemIdx === idx ? (
+                  <input
+                    autoFocus
+                    value={editingItemLabel}
+                    onChange={(e) => setEditingItemLabel(e.target.value)}
+                    onBlur={() => commitItemLabel(idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitItemLabel(idx);
+                      if (e.key === "Escape") setEditingItemIdx(null);
+                    }}
+                    placeholder="Label (e.g. tip)"
+                    style={{
+                      width: "100%",
+                      background: "rgba(255,255,255,0.06)",
+                      border: `1px solid ${T.gold}`,
+                      borderRadius: 6,
+                      padding: "3px 6px",
+                      color: T.cream,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      outline: "none",
+                      boxSizing: "border-box",
+                      marginBottom: 2,
+                    }}
+                  />
+                ) : (
+                  <p
+                    onClick={() =>
+                      isOthersItem(it.name) && startEditItemLabel(idx, it.name)
+                    }
+                    title={
+                      isOthersItem(it.name)
+                        ? "Tap to add/edit label"
+                        : undefined
+                    }
+                    style={{
+                      color: T.cream,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      cursor: isOthersItem(it.name) ? "pointer" : "default",
+                      textDecoration:
+                        isOthersItem(it.name) && !othersLabelOf(it.name)
+                          ? "underline"
+                          : "none",
+                      textDecorationStyle: "dotted",
+                    }}
+                  >
+                    {it.name}
+                  </p>
+                )}
                 <p style={{ color: T.gold, fontSize: 12 }}>
                   ₱{it.price.toFixed(2)} each
                 </p>
@@ -12816,7 +12882,7 @@ function CrewTab({
   // a single input, so multiple charges (e.g. a tip + a container fee)
   // can stack in one order.
   const [othersCharges, setOthersCharges] = useState<
-    { id: string; price: number }[]
+    { id: string; price: number; label: string }[]
   >([]);
   const [othersPresets, setOthersPresets] = useState<number[]>([]);
   const [othersInput, setOthersInput] = useState("");
@@ -12870,11 +12936,29 @@ function CrewTab({
   function addOthersCharge(price: number) {
     setOthersCharges((p) => [
       ...p,
-      { id: `${Date.now()}-${Math.random()}`, price },
+      { id: `${Date.now()}-${Math.random()}`, price, label: "" },
     ]);
   }
   function removeOthersCharge(id: string) {
     setOthersCharges((p) => p.filter((c) => c.id !== id));
+  }
+  // Lets staff add/edit the label on an already-added "Others" charge —
+  // covers the common case of tapping an amount chip first (muscle memory)
+  // and only deciding what it's for afterward, instead of forcing label
+  // entry to happen before the tap or the charge is stuck unlabeled.
+  const [editingChargeId, setEditingChargeId] = useState<string | null>(null);
+  const [editingChargeLabel, setEditingChargeLabel] = useState("");
+  function startEditChargeLabel(id: string, currentLabel: string) {
+    setEditingChargeId(id);
+    setEditingChargeLabel(currentLabel);
+  }
+  function commitChargeLabel(id: string) {
+    setOthersCharges((p) =>
+      p.map((c) =>
+        c.id === id ? { ...c, label: editingChargeLabel.trim() } : c,
+      ),
+    );
+    setEditingChargeId(null);
   }
 
   useEffect(() => {
@@ -13097,7 +13181,7 @@ function CrewTab({
               };
             }),
             ...othersCharges.map((c) => ({
-              name: "Others",
+              name: c.label ? `Others (${c.label})` : "Others",
               price: c.price,
               quantity: 1,
             })),
@@ -13834,11 +13918,49 @@ function CrewTab({
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{ color: T.cream, fontSize: 12, fontWeight: 600 }}
-                    >
-                      Others
-                    </p>
+                    {editingChargeId === c.id ? (
+                      <input
+                        autoFocus
+                        value={editingChargeLabel}
+                        onChange={(e) => setEditingChargeLabel(e.target.value)}
+                        onBlur={() => commitChargeLabel(c.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitChargeLabel(c.id);
+                          if (e.key === "Escape") setEditingChargeId(null);
+                        }}
+                        placeholder="Label (e.g. tip)"
+                        style={{
+                          width: "100%",
+                          background: "rgba(255,255,255,0.06)",
+                          border: `1px solid ${T.gold}`,
+                          borderRadius: 6,
+                          padding: "3px 6px",
+                          color: T.cream,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          outline: "none",
+                          boxSizing: "border-box",
+                          marginBottom: 2,
+                        }}
+                      />
+                    ) : (
+                      <p
+                        onClick={() => startEditChargeLabel(c.id, c.label)}
+                        title="Tap to add/edit label"
+                        style={{
+                          color: c.label ? T.cream : T.muted,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          textDecoration: c.label ? "none" : "underline",
+                          textDecorationStyle: "dotted",
+                        }}
+                      >
+                        {c.label
+                          ? `Others (${c.label})`
+                          : "Others · + add label"}
+                      </p>
+                    )}
                     <p
                       style={{
                         color: T.gold,
