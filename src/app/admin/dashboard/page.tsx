@@ -509,6 +509,7 @@ function getCrewCustomizations(
   liveEggStyles?: { name: string; image: string }[],
   liveMilkSubs?: { label: string; price: number }[],
   liveBaseSubs?: { label: string; price: number }[],
+  regularMilkItemExists?: boolean,
 ): CrewCustomizationConfig | null {
   const c = category.toLowerCase().trim();
   const n = (itemName || "").toLowerCase();
@@ -519,7 +520,9 @@ function getCrewCustomizations(
   // items created yet) falls back to the old hardcoded lists.
   const effMilk: { label: string; price: number }[] =
     liveMilkSubs !== undefined
-      ? [{ label: "Regular Milk", price: 0 }, ...liveMilkSubs]
+      ? regularMilkItemExists
+        ? liveMilkSubs
+        : [{ label: "Regular Milk", price: 0 }, ...liveMilkSubs]
       : MILK_SUBS;
   const effBase: { label: string; price: number }[] =
     liveBaseSubs !== undefined
@@ -12747,6 +12750,12 @@ function CrewTab({
     (i) =>
       i.category.toLowerCase().includes("substitution") && /milk/i.test(i.name),
   );
+  const regularMilkItemExists = menuItems.some(
+    (i) =>
+      i.category.toLowerCase().includes("substitution") &&
+      /regular\s*milk/i.test(i.name) &&
+      i.available,
+  );
   const baseSubItemsExist = menuItems.some(
     (i) =>
       i.category.toLowerCase().includes("substitution") &&
@@ -12998,6 +13007,7 @@ function CrewTab({
       eggStyleItemsExist ? liveEggStyles : undefined,
       milkSubItemsExist ? liveMilkSubs : undefined,
       baseSubItemsExist ? liveBaseSubs : undefined,
+      regularMilkItemExists,
     );
     if (config) {
       setCustomizingItem(item);
@@ -14248,6 +14258,7 @@ function CrewTab({
                         eggStyleItemsExist ? liveEggStyles : undefined,
                         milkSubItemsExist ? liveMilkSubs : undefined,
                         baseSubItemsExist ? liveBaseSubs : undefined,
+                        regularMilkItemExists,
                       );
                       if (config) {
                         setCustomizingItem(resolved);

@@ -86,6 +86,7 @@ function getCategoryCustomizations(
   itemName?: string,
   liveMilkSubs?: { label: string; price: number }[],
   liveBaseSubs?: { label: string; price: number }[],
+  regularMilkItemExists?: boolean,
 ): CustomizationConfig | null {
   const c = category.toLowerCase().trim();
   const n = (itemName || "").toLowerCase();
@@ -96,7 +97,9 @@ function getCategoryCustomizations(
   // created yet) falls back to the old hardcoded lists.
   const effMilk: { label: string; price: number }[] =
     liveMilkSubs !== undefined
-      ? [{ label: "Regular Milk", price: 0 }, ...liveMilkSubs]
+      ? regularMilkItemExists
+        ? liveMilkSubs
+        : [{ label: "Regular Milk", price: 0 }, ...liveMilkSubs]
       : MILK_SUBS;
   const effBase: { label: string; price: number }[] =
     liveBaseSubs !== undefined
@@ -1922,6 +1925,24 @@ function GenericOptionsSheet({
           return livePrice !== undefined ? { ...c, price: livePrice } : c;
         }),
     }))
+    .map((g) => {
+      // A "Milk" option group saved on the item before "Regular Milk" was
+      // ever added as an explicit choice is frozen with only the paid
+      // substitutions (e.g. just "Oat Milk") — it never had the free
+      // default baked in. Same idea as the live price override above:
+      // patch it in at render time instead of requiring every item to be
+      // re-saved in admin.
+      if (g.name.toLowerCase() !== "milk") return g;
+      const hasFreeDefault = g.choices.some(
+        (c) => c.label.trim().toLowerCase() === "regular milk",
+      );
+      if (hasFreeDefault) return g;
+      if (hiddenSubLabels?.has("regularmilk")) return g;
+      return {
+        ...g,
+        choices: [{ label: "Regular Milk", price: 0 }, ...g.choices],
+      };
+    })
     .filter((g) => g.choices.length > 0);
   const [selections, setSelections] = useState<Record<string, Set<string>>>(
     () => {
@@ -2201,6 +2222,12 @@ function MenuScreen({
     (i: MenuItem) =>
       i.category.toLowerCase().includes("substitution") && /milk/i.test(i.name),
   );
+  const regularMilkItemExists = menuItems.some(
+    (i: MenuItem) =>
+      i.category.toLowerCase().includes("substitution") &&
+      /regular\s*milk/i.test(i.name) &&
+      i.available,
+  );
   const baseSubItemsExist = menuItems.some(
     (i: MenuItem) =>
       i.category.toLowerCase().includes("substitution") &&
@@ -2342,6 +2369,7 @@ function MenuScreen({
       item.name,
       milkSubItemsExist ? liveMilkSubs : undefined,
       baseSubItemsExist ? liveBaseSubs : undefined,
+      regularMilkItemExists,
     );
     if (config) {
       setCustomizingItem(item);
@@ -2889,6 +2917,7 @@ function MenuScreen({
               itemWithVariant.name,
               milkSubItemsExist ? liveMilkSubs : undefined,
               baseSubItemsExist ? liveBaseSubs : undefined,
+              regularMilkItemExists,
             );
             if (config) {
               setCustomizingItem(itemWithVariant);
@@ -4696,6 +4725,93 @@ function CheckoutScreen({
   );
 }
 
+function TipSelector({
+  amount,
+  onChange,
+}: {
+  amount: number;
+  onChange: (v: number) => void;
+}) {
+  const presets = [20, 50, 100];
+  const [custom, setCustom] = useState("");
+  return (
+    <div
+      style={{
+        background: CARD,
+        border: `1px solid ${BR}`,
+        borderRadius: 14,
+        padding: "14px 16px",
+        marginBottom: 16,
+      }}
+    >
+      <p
+        style={{
+          color: CM,
+          fontSize: 11,
+          letterSpacing: ".1em",
+          fontFamily: "'Cinzel',serif",
+          marginBottom: 10,
+        }}
+      >
+        ADD A TIP? (OPTIONAL)
+      </p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        {[0, ...presets].map((p) => {
+          const sel = amount === p && custom === "";
+          return (
+            <button
+              key={p}
+              onClick={() => {
+                setCustom("");
+                onChange(p);
+              }}
+              style={{
+                flex: 1,
+                padding: "10px 6px",
+                borderRadius: 10,
+                border: `1.5px solid ${sel ? G : BR}`,
+                background: sel ? GD : "transparent",
+                color: sel ? G : CM,
+                fontFamily: "'Cinzel',serif",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                touchAction: "manipulation",
+              }}
+            >
+              {p === 0 ? "NO TIP" : `₱${p}`}
+            </button>
+          );
+        })}
+      </div>
+      <input
+        type="number"
+        inputMode="decimal"
+        value={custom}
+        onChange={(e) => {
+          const v = e.target.value;
+          setCustom(v);
+          onChange(Math.max(0, parseFloat(v) || 0));
+        }}
+        onWheel={(e) => e.currentTarget.blur()}
+        placeholder="Or enter a custom amount"
+        style={{
+          width: "100%",
+          background: "rgba(255,255,255,.03)",
+          border: `1px solid ${BR}`,
+          borderRadius: 8,
+          padding: "10px 12px",
+          color: C,
+          fontSize: 14,
+          outline: "none",
+          fontFamily: "inherit",
+          boxSizing: "border-box",
+        }}
+      />
+    </div>
+  );
+}
+
 /* ─── PAYMENT SCREEN ──────────────────────────────────────────────────────── */
 function PaymentScreen({
   cart,
@@ -4709,6 +4825,8 @@ function PaymentScreen({
   form,
   vouchers = [],
   onGcashRefChange,
+  tipAmount,
+  onTipChange,
 }: {
   cart: CartItem[];
   orderType: OrderType;
@@ -4727,12 +4845,15 @@ function PaymentScreen({
     cartKey: string;
   }[];
   onGcashRefChange?: (name: string, refNo: string) => void;
+  tipAmount: number;
+  onTipChange: (v: number) => void;
 }) {
   const rawTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const deliveryFee =
     orderType === "delivery" ? (form.deliveryAddress?.deliveryFee ?? 0) : 0;
   const totalVoucherDiscount = vouchers.reduce((s, v) => s + v.discount, 0);
-  const total = Math.max(0, rawTotal - totalVoucherDiscount) + deliveryFee;
+  const total =
+    Math.max(0, rawTotal - totalVoucherDiscount) + deliveryFee + tipAmount;
   const fileRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState(false);
@@ -4960,6 +5081,7 @@ function PaymentScreen({
                         if (m.id !== "gcash" && m.id !== "split") {
                           setUploaded(false);
                           setPreview(null);
+                          onTipChange(0);
                         }
                       }}
                       style={{
@@ -5337,6 +5459,8 @@ function PaymentScreen({
                   ? "GCash Portion"
                   : "GCash Payment"}
               </SectionTitle>
+
+              <TipSelector amount={tipAmount} onChange={onTipChange} />
 
               {/* ── Steps card ── */}
               <div
@@ -6716,6 +6840,7 @@ export default function OrderPage() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PayMethod>("cash");
+  const [tipAmount, setTipAmount] = useState(0);
   const [receiptUrl, setReceiptUrl] = useState("");
   const [receiptKey, setReceiptKey] = useState("");
   const [gcashRefName, setGcashRefName] = useState("");
@@ -6874,7 +6999,8 @@ export default function OrderPage() {
       const deliveryFee =
         orderType === "delivery" ? (form.deliveryAddress?.deliveryFee ?? 0) : 0;
       const totalVoucherDiscount = vouchers.reduce((s, v) => s + v.discount, 0);
-      const total = Math.max(0, rawTotal - totalVoucherDiscount) + deliveryFee;
+      const total =
+        Math.max(0, rawTotal - totalVoucherDiscount) + deliveryFee + tipAmount;
       const eff: PayMethod = orderType === "delivery" ? "gcash" : paymentMethod;
       const splitAmounts =
         eff === "split"
@@ -6905,6 +7031,7 @@ export default function OrderPage() {
             : undefined,
         })),
         total,
+        tipAmount: tipAmount > 0 ? tipAmount : undefined,
         notes: form.notes || undefined,
         paymentMethod: eff,
         ...(splitAmounts
@@ -7031,6 +7158,7 @@ export default function OrderPage() {
       sessionStorage.removeItem("3rdspace_cart");
     } catch {}
     setPaymentMethod("cash");
+    setTipAmount(0);
     setForm({
       customerName: "",
       customerContact: "",
@@ -7179,6 +7307,8 @@ export default function OrderPage() {
             setGcashRefName(name);
             setGcashRefNumber(ref);
           }}
+          tipAmount={tipAmount}
+          onTipChange={setTipAmount}
         />
       )}
       {step === "confirmed" && confirmed && (
