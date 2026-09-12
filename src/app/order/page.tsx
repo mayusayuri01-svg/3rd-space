@@ -3847,7 +3847,7 @@ function TablePicker({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(5, 1fr)",
+              gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
               gap: 8,
             }}
           >
