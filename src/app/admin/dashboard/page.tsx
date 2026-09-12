@@ -17584,6 +17584,17 @@ export default function AdminDashboard() {
       // /api/dashboard-poll for why they're now folded into one request.
       const needsMenu = tabRef.current === "crew" || tabRef.current === "menu";
       const res = await fetch(`/api/dashboard-poll?menu=${needsMenu ? 1 : 0}`);
+      if (res.status === 401) {
+        // Session cookie missing/expired. Previously this just threw and
+        // was swallowed by the catch below (console.error only) — so the
+        // Crew/Menu tab silently kept showing stale/empty data forever
+        // with zero indication the user needed to log back in.
+        if (!silent) {
+          showToast("Session expired — please log in again", false);
+        }
+        logout();
+        return;
+      }
       if (!res.ok) throw new Error(`dashboard-poll ${res.status}`);
       const {
         orders: fetched,

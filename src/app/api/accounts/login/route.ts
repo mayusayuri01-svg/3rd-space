@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
       path: "/",
       domain:
         process.env.NODE_ENV === "production" ? ".3rdspace.shop" : undefined,
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      maxAge: 60 * 60 * 24 * 365, // 1 year — this tablet runs 24/7 at the register;
+      // a short expiry just means staff get logged out mid-shift with no warning
     });
     return res;
   } catch {

@@ -27,6 +27,10 @@ export async function GET(req: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // Rolling refresh: every successful poll re-issues the cookie with a
+  // fresh maxAge, so an actively-used tablet's session effectively never
+  // expires — only a device that goes untouched for the full maxAge
+  // window (e.g. powered off for months) would need to re-login.
 
   await connectDB();
 
