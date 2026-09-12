@@ -17010,6 +17010,20 @@ export default function AdminDashboard() {
   useEffect(() => {
     tabRef.current = tab;
   }, [tab]);
+
+  // Fire an immediate poll whenever the tab changes, so switching to
+  // Crew/Menu doesn't sit empty until the next scheduled 25s interval.
+  useEffect(() => {
+    if (!role) return;
+    fetchData(true, tab);
+  }, [tab]);
+
+  // Fire an immediate poll whenever the tab changes, so switching to
+  // Crew/Menu doesn't sit empty until the next scheduled 25s interval.
+  useEffect(() => {
+    if (!role) return;
+    fetchData(true, tab);
+  }, [tab]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17479,7 +17493,12 @@ export default function AdminDashboard() {
           setRole(d.role);
           setStaffName(d.displayName);
           if (d.role === "staff") setTab("crew");
-          fetchData();
+          // Don't rely on tabRef here — it won't reflect the setTab() call
+          // above until its effect runs post-render, which is after this
+          // continues executing. That race meant the very first poll after
+          // a refresh always fetched with menu=0, leaving Crew/Menu empty
+          // until the next scheduled tick (several minutes later).
+          fetchData(false, d.role === "staff" ? "crew" : "orders");
         })
         .catch(() => {
           localStorage.removeItem("3s_role");
@@ -17576,13 +17595,14 @@ export default function AdminDashboard() {
     setMenuItems([]);
   }
 
-  async function fetchData(silent = false): Promise<void> {
+  async function fetchData(silent = false, tabOverride?: Tab): Promise<void> {
     try {
       if (!silent) setLoading(true);
       // Single combined call — was 4 separate serverless invocations
       // (orders, shop-status, menu, cash-log) every poll tick. See
       // /api/dashboard-poll for why they're now folded into one request.
-      const needsMenu = tabRef.current === "crew" || tabRef.current === "menu";
+      const effectiveTab = tabOverride ?? tabRef.current;
+      const needsMenu = effectiveTab === "crew" || effectiveTab === "menu";
       const res = await fetch(`/api/dashboard-poll?menu=${needsMenu ? 1 : 0}`);
       if (res.status === 401) {
         // Session cookie missing/expired. Previously this just threw and
