@@ -15,13 +15,16 @@ const FIELDS = [
   "active",
 ];
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } },
-) {
+// Next.js 15: `params` is a Promise and must be awaited.
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function PATCH(req: Request, { params }: Ctx) {
   const s = await requireStaffSession();
   if (s?.role !== "admin")
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { id } = await params;
+  if (!ObjectId.isValid(id))
+    return NextResponse.json({ error: "bad id" }, { status: 400 });
   const body = await req.json();
   const $set: any = { updatedAt: new Date().toISOString() };
   for (const f of FIELDS) if (body[f] !== undefined) $set[f] = body[f];
@@ -29,7 +32,7 @@ export async function PATCH(
   const r = await db
     .collection("ingredients")
     .findOneAndUpdate(
-      { _id: new ObjectId(params.id) },
+      { _id: new ObjectId(id) },
       { $set },
       { returnDocument: "after" },
     );
@@ -40,16 +43,16 @@ export async function PATCH(
   return NextResponse.json({ ...doc, _id: String(doc._id) });
 }
 
-export async function DELETE(
-  _: Request,
-  { params }: { params: { id: string } },
-) {
+export async function DELETE(_: Request, { params }: Ctx) {
   const s = await requireStaffSession();
   if (s?.role !== "admin")
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { id } = await params;
+  if (!ObjectId.isValid(id))
+    return NextResponse.json({ error: "bad id" }, { status: 400 });
   const db = await getDb();
   await db
     .collection("ingredients")
-    .updateOne({ _id: new ObjectId(params.id) }, { $set: { active: false } });
+    .updateOne({ _id: new ObjectId(id) }, { $set: { active: false } });
   return NextResponse.json({ ok: true });
 }
