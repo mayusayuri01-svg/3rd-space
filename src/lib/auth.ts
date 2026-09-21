@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+
 const encoder = new TextEncoder();
 
 function bufferToHex(buffer: ArrayBuffer): string {
@@ -52,4 +54,14 @@ export async function verifySession(
   } catch {
     return null;
   }
+}
+
+export async function requireStaffSession(): Promise<{
+  role: string;
+  displayName: string;
+} | null> {
+  const store = await cookies();
+  const token = store.get("3s_session")?.value;
+  if (!token) return null;
+  return verifySession(token);
 }

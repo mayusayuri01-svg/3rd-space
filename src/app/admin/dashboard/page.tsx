@@ -13,6 +13,7 @@ import {
   Clock,
   DollarSign,
   Package,
+  Boxes,
   X,
   UtensilsCrossed,
   BarChart3,
@@ -300,6 +301,7 @@ type MenuItem = {
   available: boolean;
   variants?: string[];
   options?: OptionGroup[];
+  recipe?: { ingredientId: string; qty: number }[];
 };
 type DailyReport = {
   _id: string;
@@ -355,6 +357,7 @@ type Tab =
   | "orders"
   | "menu"
   | "analytics"
+  | "inventory"
   | "crew"
   | "board"
   | "vouchers"
@@ -5423,10 +5426,12 @@ function MenuItemForm({
   item,
   onSave,
   onCancel,
+  devMode = false,
 }: {
   item?: Partial<MenuItem>;
   onSave: (data: Partial<MenuItem>) => Promise<boolean>;
   onCancel: () => void;
+  devMode?: boolean;
 }) {
   const [form, setForm] = useState<Partial<MenuItem>>(() => {
     if (!item) return { available: true };
@@ -5441,6 +5446,15 @@ function MenuItemForm({
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState("");
   const [variantInput, setVariantInput] = useState("");
+  const [ingredients, setIngredients] = useState<
+    { _id: string; name: string; unit: string }[]
+  >([]);
+  useEffect(() => {
+    fetch("/api/inventory")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setIngredients)
+      .catch(() => {});
+  }, []);
   const set = (k: keyof MenuItem, v: any) => setForm((p) => ({ ...p, [k]: v }));
   const valid = !!(
     form.name?.trim() &&
@@ -5993,6 +6007,138 @@ function MenuItemForm({
         </div>
       </div>
 
+      {/* ── RECIPE (developer mode only) ─────────────────────────── */}
+      {devMode && (
+        <div>
+          <label style={labelStyle}>
+            RECIPE — INGREDIENTS USED PER ORDER (auto-deducts on completion)
+          </label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {(form.recipe || []).map(
+              (line: { ingredientId: string; qty: number }, li: number) => {
+                const ing = ingredients.find(
+                  (i) => i._id === line.ingredientId,
+                );
+                return (
+                  <div
+                    key={li}
+                    style={{ display: "flex", gap: 6, alignItems: "center" }}
+                  >
+                    <select
+                      value={line.ingredientId}
+                      onChange={(e) => {
+                        const next = [...(form.recipe || [])];
+                        next[li] = {
+                          ...next[li],
+                          ingredientId: e.target.value,
+                        };
+                        set("recipe", next);
+                      }}
+                      style={{
+                        flex: 1,
+                        background: "rgba(255,255,255,0.04)",
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 8,
+                        padding: "8px 10px",
+                        color: line.ingredientId ? T.cream : T.muted,
+                        fontSize: 12,
+                        outline: "none",
+                      }}
+                    >
+                      <option value="" style={{ background: "#0a0f0a" }}>
+                        — pick ingredient —
+                      </option>
+                      {ingredients.map((i) => (
+                        <option
+                          key={i._id}
+                          value={i._id}
+                          style={{ background: "#0a0f0a" }}
+                        >
+                          {i.name} ({i.unit})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      value={line.qty || ""}
+                      min={0}
+                      onChange={(e) => {
+                        const next = [...(form.recipe || [])];
+                        next[li] = {
+                          ...next[li],
+                          qty: parseFloat(e.target.value) || 0,
+                        };
+                        set("recipe", next);
+                      }}
+                      placeholder={ing ? `qty (${ing.unit})` : "qty"}
+                      style={{
+                        width: 90,
+                        background: "rgba(255,255,255,0.04)",
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 8,
+                        padding: "8px 10px",
+                        color: T.cream,
+                        fontSize: 12,
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      onClick={() =>
+                        set(
+                          "recipe",
+                          (form.recipe || []).filter(
+                            (_: any, i: number) => i !== li,
+                          ),
+                        )
+                      }
+                      style={{
+                        background: "rgba(239,68,68,0.08)",
+                        border: "1px solid rgba(239,68,68,0.2)",
+                        color: T.red,
+                        borderRadius: 6,
+                        padding: "7px 9px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              },
+            )}
+            <button
+              onClick={() =>
+                set("recipe", [
+                  ...(form.recipe || []),
+                  { ingredientId: "", qty: 0 },
+                ])
+              }
+              style={{
+                alignSelf: "flex-start",
+                padding: "7px 14px",
+                background: "rgba(91,155,213,0.08)",
+                border: "1px dashed rgba(91,155,213,0.35)",
+                borderRadius: 8,
+                color: T.blue,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              + Add Ingredient
+            </button>
+            {(form.recipe || []).length === 0 && (
+              <p style={{ color: T.faint, fontSize: 10 }}>
+                No recipe set — inventory won't be touched when this item is
+                ordered.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div>
         <label style={labelStyle}>DESCRIPTION</label>
         <textarea
@@ -6167,9 +6313,11 @@ function MenuItemForm({
 function MenuTab({
   items,
   onRefresh,
+  devMode = false,
 }: {
   items: MenuItem[];
   onRefresh: () => Promise<void>;
+  devMode?: boolean;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState<MenuItem | null>(null);
@@ -6756,6 +6904,7 @@ function MenuTab({
               item={editItem}
               onSave={saveItem}
               onCancel={() => setEditItem(null)}
+              devMode={devMode}
             />
           </div>
         </div>
@@ -6769,6 +6918,7 @@ function MenuTab({
               item={undefined}
               onSave={saveItem}
               onCancel={() => setShowForm(false)}
+              devMode={devMode}
             />
           )}
 
@@ -6997,6 +7147,1244 @@ function MenuTab({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+type InvUnit = "ml" | "g" | "tbag" | "pcs";
+
+type Ing = {
+  _id: string;
+  name: string;
+  unit: InvUnit;
+  containerSize: number;
+  containersPar: number;
+  stock: number;
+  lowPct: number;
+  wastePct: number;
+  capacity: number;
+  pct: number;
+  low: boolean;
+};
+
+function InventoryTab({
+  staffName,
+  onChanged,
+  devMode = false,
+}: {
+  menuItems: MenuItem[];
+  staffName: string;
+  onChanged: () => void;
+  devMode?: boolean;
+}) {
+  const [items, setItems] = useState<Ing[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<{
+    ing: Ing;
+    type: "restock" | "waste" | "calibration" | "adjust";
+  } | null>(null);
+  const [editTarget, setEditTarget] = useState<Ing | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    unit: "ml" as InvUnit,
+    containerSize: "",
+    containersPar: "",
+    lowPct: "",
+    wastePct: "",
+  });
+  const [confirmDelete, setConfirmDelete] = useState<Ing | null>(null);
+  const [filter, setFilter] = useState<"all" | "low" | "out">("all");
+  const [sortBy, setSortBy] = useState<"name" | "pct">("pct");
+  const [form, setForm] = useState({
+    name: "",
+    unit: "ml" as InvUnit,
+    containerSize: "",
+    containersPar: "1",
+    stock: "",
+    lowPct: "15",
+    wastePct: "0",
+  });
+  const w = useWindowWidth();
+  const isMobile = w < 640;
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/inventory");
+      if (r.ok) setItems(await r.json());
+    } catch {}
+    setLoading(false);
+  }
+
+  async function create() {
+    const body = {
+      name: form.name.trim(),
+      unit: form.unit,
+      containerSize: parseFloat(form.containerSize) || 0,
+      containersPar: parseFloat(form.containersPar) || 1,
+      stock: parseFloat(form.stock) || 0,
+      lowPct: parseFloat(form.lowPct) || 15,
+      wastePct: parseFloat(form.wastePct) || 0,
+    };
+    if (!body.name || !body.containerSize) return;
+    const r = await fetch("/api/inventory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      setForm({
+        name: "",
+        unit: "ml",
+        containerSize: "",
+        containersPar: "1",
+        stock: "",
+        lowPct: "15",
+        wastePct: "0",
+      });
+      setShowAdd(false);
+      load();
+      onChanged();
+    }
+  }
+
+  function startEdit(ing: Ing) {
+    setEditTarget(ing);
+    setEditForm({
+      name: ing.name,
+      unit: ing.unit,
+      containerSize: String(ing.containerSize),
+      containersPar: String(ing.containersPar),
+      lowPct: String(ing.lowPct),
+      wastePct: String(ing.wastePct),
+    });
+  }
+
+  async function saveEdit() {
+    if (!editTarget) return;
+    const body = {
+      name: editForm.name.trim(),
+      unit: editForm.unit,
+      containerSize:
+        parseFloat(editForm.containerSize) || editTarget.containerSize,
+      containersPar:
+        parseFloat(editForm.containersPar) || editTarget.containersPar,
+      lowPct: parseFloat(editForm.lowPct) ?? editTarget.lowPct,
+      wastePct: parseFloat(editForm.wastePct) ?? editTarget.wastePct,
+    };
+    if (!body.name) return;
+    const r = await fetch(`/api/inventory/${editTarget._id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      setEditTarget(null);
+      load();
+      onChanged();
+    }
+  }
+
+  async function deleteIng(ing: Ing) {
+    const r = await fetch(`/api/inventory/${ing._id}`, { method: "DELETE" });
+    if (r.ok) {
+      setConfirmDelete(null);
+      load();
+      onChanged();
+    }
+  }
+
+  const barColor = (pct: number) =>
+    pct <= 15 ? T.red : pct <= 35 ? "#f59e0b" : T.green;
+
+  const input: React.CSSProperties = {
+    width: "100%",
+    background: "rgba(255,255,255,0.04)",
+    border: `1px solid ${T.border}`,
+    borderRadius: 8,
+    padding: "9px 12px",
+    color: T.cream,
+    fontSize: 13,
+    outline: "none",
+    boxSizing: "border-box",
+  };
+  const lbl: React.CSSProperties = {
+    color: T.muted,
+    fontSize: 10,
+    letterSpacing: ".1em",
+    display: "block",
+    marginBottom: 6,
+  };
+
+  const devFilteredItems = items
+    .filter((i) => {
+      if (filter === "out") return i.stock <= 0;
+      if (filter === "low") return i.low;
+      return true;
+    })
+    .sort((a, b) =>
+      sortBy === "name" ? a.name.localeCompare(b.name) : a.pct - b.pct,
+    );
+  // Staff keep the original list; filter/sort only applies in developer mode.
+  const filteredItems = devMode ? devFilteredItems : items;
+
+  const outCount = items.filter((i) => i.stock <= 0).length;
+  const lowCount = items.filter((i) => i.low && i.stock > 0).length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {moveTarget && (
+        <StockMoveModal
+          ing={moveTarget.ing}
+          type={moveTarget.type}
+          staffName={staffName}
+          onClose={() => setMoveTarget(null)}
+          onDone={() => {
+            setMoveTarget(null);
+            load();
+            onChanged();
+          }}
+        />
+      )}
+
+      {confirmDelete && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: "#111810",
+              border: "1px solid rgba(239,68,68,0.4)",
+              borderRadius: 16,
+              padding: 24,
+              maxWidth: 340,
+              width: "90%",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            <p style={{ color: T.cream, fontSize: 14, fontWeight: 600 }}>
+              Delete <span style={{ color: T.red }}>{confirmDelete.name}</span>?
+            </p>
+            <p style={{ color: T.muted, fontSize: 12 }}>
+              Ingredient will be hidden. Cannot be undone from here.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => deleteIng(confirmDelete)}
+                style={{
+                  flex: 1,
+                  padding: 11,
+                  background: "rgba(239,68,68,0.12)",
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  borderRadius: 10,
+                  color: T.red,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                style={{
+                  flex: 1,
+                  padding: 11,
+                  background: "rgba(255,255,255,0.05)",
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  color: T.muted,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
+        >
+          {devMode &&
+            (["all", "low", "out"] as const).map((f) => {
+              const count =
+                f === "all" ? items.length : f === "out" ? outCount : lowCount;
+              const active = filter === f;
+              const color =
+                f === "out" ? T.red : f === "low" ? "#f59e0b" : T.muted;
+              return (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  style={{
+                    padding: "5px 12px",
+                    borderRadius: 20,
+                    cursor: "pointer",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: active
+                      ? f === "out"
+                        ? "rgba(239,68,68,0.12)"
+                        : f === "low"
+                          ? "rgba(245,158,11,0.12)"
+                          : T.goldDim
+                      : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${active ? color : T.border}`,
+                    color: active ? color : T.muted,
+                    transition: "all .15s",
+                  }}
+                >
+                  {f === "all"
+                    ? `All (${count})`
+                    : f === "out"
+                      ? `Out (${count})`
+                      : `Low (${count})`}
+                </button>
+              );
+            })}
+          {devMode && (
+            <button
+              onClick={() => setSortBy((s) => (s === "pct" ? "name" : "pct"))}
+              style={{
+                padding: "5px 12px",
+                borderRadius: 20,
+                cursor: "pointer",
+                fontSize: 11,
+                background: "rgba(255,255,255,0.03)",
+                border: `1px solid ${T.border}`,
+                color: T.muted,
+              }}
+            >
+              {sortBy === "pct" ? "↑ Stock %" : "A–Z"}
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={load}
+            style={{
+              padding: "8px 14px",
+              background: "rgba(255,255,255,0.05)",
+              border: `1px solid ${T.border}`,
+              borderRadius: 8,
+              color: T.muted,
+              fontSize: 12,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <RefreshCw size={13} /> Refresh
+          </button>
+          <button
+            onClick={() => {
+              setShowAdd((v) => !v);
+              setEditTarget(null);
+            }}
+            style={{
+              padding: "8px 16px",
+              background: T.gold,
+              border: "none",
+              borderRadius: 8,
+              color: "#0a0f0a",
+              fontFamily: "'Cinzel',serif",
+              fontSize: 11,
+              letterSpacing: ".1em",
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Plus size={13} /> ADD
+          </button>
+        </div>
+      </div>
+
+      {showAdd && (
+        <div
+          style={{
+            background: "rgba(0,0,0,0.4)",
+            border: `1px solid ${T.borderH}`,
+            borderRadius: 16,
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          <p
+            style={{
+              color: T.gold,
+              fontFamily: "'Cinzel',serif",
+              fontSize: 11,
+              letterSpacing: ".1em",
+            }}
+          >
+            NEW INGREDIENT
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr 1fr",
+              gap: 10,
+            }}
+          >
+            <div>
+              <label style={lbl}>NAME</label>
+              <input
+                value={form.name}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, name: e.target.value }))
+                }
+                placeholder="e.g. Oatside"
+                style={input}
+              />
+            </div>
+            <div>
+              <label style={lbl}>UNIT</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                {(["ml", "g", "tbag", "pcs"] as InvUnit[]).map((u) => (
+                  <button
+                    key={u}
+                    onClick={() => setForm((p) => ({ ...p, unit: u }))}
+                    style={{
+                      flex: 1,
+                      padding: "9px 0",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      background:
+                        form.unit === u ? T.goldDim : "rgba(255,255,255,0.03)",
+                      border: `1px solid ${form.unit === u ? T.gold : T.border}`,
+                      color: form.unit === u ? T.gold : T.muted,
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={lbl}>CONTAINER SIZE</label>
+              <input
+                type="number"
+                value={form.containerSize}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, containerSize: e.target.value }))
+                }
+                placeholder="1000"
+                style={input}
+              />
+            </div>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)",
+              gap: 10,
+            }}
+          >
+            <div>
+              <label style={lbl}>FULL = N CONTAINERS</label>
+              <input
+                type="number"
+                value={form.containersPar}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, containersPar: e.target.value }))
+                }
+                style={input}
+              />
+            </div>
+            <div>
+              <label style={lbl}>CURRENT STOCK</label>
+              <input
+                type="number"
+                value={form.stock}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, stock: e.target.value }))
+                }
+                placeholder="1000"
+                style={input}
+              />
+            </div>
+            <div>
+              <label style={lbl}>ALERT AT %</label>
+              <input
+                type="number"
+                value={form.lowPct}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, lowPct: e.target.value }))
+                }
+                style={input}
+              />
+            </div>
+            <div>
+              <label style={lbl}>WASTE / CALIB %</label>
+              <input
+                type="number"
+                value={form.wastePct}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, wastePct: e.target.value }))
+                }
+                placeholder="0"
+                style={input}
+              />
+            </div>
+          </div>
+          <p style={{ color: T.faint, fontSize: 10 }}>
+            Waste % is the calibration allowance — grind retention, purge shots,
+            line loss. Set beans to ~5% and every deduction silently takes 5%
+            extra so the counted stock actually matches the shelf.
+          </p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={create}
+              style={{
+                flex: 1,
+                padding: 11,
+                background: T.gold,
+                border: "none",
+                borderRadius: 10,
+                color: "#0a0f0a",
+                fontFamily: "'Cinzel',serif",
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: ".1em",
+                cursor: "pointer",
+              }}
+            >
+              SAVE
+            </button>
+            <button
+              onClick={() => setShowAdd(false)}
+              style={{
+                padding: "11px 18px",
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${T.border}`,
+                borderRadius: 10,
+                color: T.muted,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <p
+          style={{
+            color: T.muted,
+            fontSize: 12,
+            textAlign: "center",
+            padding: 40,
+          }}
+        >
+          Loading…
+        </p>
+      ) : filteredItems.length === 0 ? (
+        <div
+          style={{ textAlign: "center", padding: "60px 20px", color: T.faint }}
+        >
+          <Package size={40} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
+          <p style={{ fontSize: 14 }}>
+            {items.length === 0
+              ? "No ingredients yet — add your first one above"
+              : "Nothing matches that filter"}
+          </p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filteredItems.map((i) => {
+            const isEditing = editTarget?._id === i._id;
+            return (
+              <div
+                key={i._id}
+                style={{
+                  background: T.bgCard,
+                  border: `1px solid ${i.low ? "rgba(239,68,68,0.4)" : T.border}`,
+                  borderRadius: 12,
+                  padding: "14px 16px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      minWidth: 0,
+                      flex: 1,
+                    }}
+                  >
+                    <span
+                      style={{ color: T.cream, fontSize: 14, fontWeight: 600 }}
+                    >
+                      {i.name}
+                    </span>
+                    {i.low && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: T.red,
+                          background: "rgba(239,68,68,0.1)",
+                          border: "1px solid rgba(239,68,68,0.3)",
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {i.stock <= 0 ? "OUT OF STOCK" : "LOW"}
+                      </span>
+                    )}
+                    {i.wastePct > 0 && (
+                      <span
+                        style={{ fontSize: 10, color: T.muted, flexShrink: 0 }}
+                      >
+                        · {i.wastePct}% calib
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: "'Cinzel',serif",
+                        fontSize: 15,
+                        fontWeight: 700,
+                        color: barColor(i.pct),
+                      }}
+                    >
+                      {i.pct}%
+                    </span>
+                    <span style={{ color: T.muted, fontSize: 12 }}>
+                      {Math.round(i.stock)} / {i.capacity} {i.unit}
+                    </span>
+                    {devMode && (
+                      <>
+                        <button
+                          onClick={() =>
+                            isEditing ? setEditTarget(null) : startEdit(i)
+                          }
+                          title="Edit"
+                          style={{
+                            padding: 6,
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            background: isEditing
+                              ? T.goldDim
+                              : "rgba(255,255,255,0.04)",
+                            border: `1px solid ${isEditing ? T.gold : T.border}`,
+                            color: isEditing ? T.gold : T.muted,
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(i)}
+                          title="Delete"
+                          style={{
+                            padding: 6,
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            background: "rgba(239,68,68,0.06)",
+                            border: "1px solid rgba(239,68,68,0.2)",
+                            color: T.red,
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    position: "relative",
+                    height: 6,
+                    background: "rgba(255,255,255,0.05)",
+                    borderRadius: 99,
+                  }}
+                >
+                  <div
+                    style={{
+                      height: 6,
+                      borderRadius: 99,
+                      width: `${Math.max(Math.min(i.pct, 100), 0)}%`,
+                      background: barColor(i.pct),
+                      transition: "width .4s",
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: `${i.lowPct}%`,
+                      top: -3,
+                      width: 1,
+                      height: 12,
+                      background: "rgba(239,68,68,0.6)",
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {(
+                    [
+                      ["restock", "+ Restock", T.green],
+                      ["waste", "Waste", T.red],
+                      ["calibration", "Calibration", T.blue],
+                      ["adjust", "Recount", T.muted],
+                    ] as const
+                  ).map(([type, label, color]) => (
+                    <button
+                      key={type}
+                      onClick={() => setMoveTarget({ ing: i, type })}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 7,
+                        cursor: "pointer",
+                        background: "rgba(255,255,255,0.03)",
+                        border: `1px solid ${T.border}`,
+                        color,
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {isEditing && (
+                  <div
+                    style={{
+                      borderTop: `1px solid ${T.border}`,
+                      paddingTop: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
+                    <p
+                      style={{
+                        color: T.gold,
+                        fontSize: 10,
+                        letterSpacing: ".1em",
+                        fontFamily: "'Cinzel',serif",
+                      }}
+                    >
+                      EDIT SETTINGS
+                    </p>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr",
+                        gap: 10,
+                      }}
+                    >
+                      <div>
+                        <label style={lbl}>NAME</label>
+                        <input
+                          value={editForm.name}
+                          onChange={(e) =>
+                            setEditForm((p) => ({ ...p, name: e.target.value }))
+                          }
+                          style={input}
+                        />
+                      </div>
+                      <div>
+                        <label style={lbl}>UNIT</label>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {(["ml", "g", "tbag", "pcs"] as InvUnit[]).map(
+                            (u) => (
+                              <button
+                                key={u}
+                                onClick={() =>
+                                  setEditForm((p) => ({ ...p, unit: u }))
+                                }
+                                style={{
+                                  flex: 1,
+                                  padding: "9px 0",
+                                  borderRadius: 8,
+                                  cursor: "pointer",
+                                  background:
+                                    editForm.unit === u
+                                      ? T.goldDim
+                                      : "rgba(255,255,255,0.03)",
+                                  border: `1px solid ${editForm.unit === u ? T.gold : T.border}`,
+                                  color: editForm.unit === u ? T.gold : T.muted,
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {u}
+                              </button>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isMobile
+                          ? "1fr 1fr"
+                          : "repeat(4,1fr)",
+                        gap: 10,
+                      }}
+                    >
+                      <div>
+                        <label style={lbl}>CONTAINER SIZE</label>
+                        <input
+                          type="number"
+                          value={editForm.containerSize}
+                          onChange={(e) =>
+                            setEditForm((p) => ({
+                              ...p,
+                              containerSize: e.target.value,
+                            }))
+                          }
+                          style={input}
+                        />
+                      </div>
+                      <div>
+                        <label style={lbl}>FULL = N CONTAINERS</label>
+                        <input
+                          type="number"
+                          value={editForm.containersPar}
+                          onChange={(e) =>
+                            setEditForm((p) => ({
+                              ...p,
+                              containersPar: e.target.value,
+                            }))
+                          }
+                          style={input}
+                        />
+                      </div>
+                      <div>
+                        <label style={lbl}>ALERT AT %</label>
+                        <input
+                          type="number"
+                          value={editForm.lowPct}
+                          onChange={(e) =>
+                            setEditForm((p) => ({
+                              ...p,
+                              lowPct: e.target.value,
+                            }))
+                          }
+                          style={input}
+                        />
+                      </div>
+                      <div>
+                        <label style={lbl}>WASTE / CALIB %</label>
+                        <input
+                          type="number"
+                          value={editForm.wastePct}
+                          onChange={(e) =>
+                            setEditForm((p) => ({
+                              ...p,
+                              wastePct: e.target.value,
+                            }))
+                          }
+                          style={input}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={saveEdit}
+                        style={{
+                          flex: 1,
+                          padding: "9px",
+                          background: T.gold,
+                          border: "none",
+                          borderRadius: 9,
+                          color: "#0a0f0a",
+                          fontFamily: "'Cinzel',serif",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          letterSpacing: ".08em",
+                          cursor: "pointer",
+                        }}
+                      >
+                        SAVE CHANGES
+                      </button>
+                      <button
+                        onClick={() => setEditTarget(null)}
+                        style={{
+                          padding: "9px 16px",
+                          background: "rgba(255,255,255,0.04)",
+                          border: `1px solid ${T.border}`,
+                          borderRadius: 9,
+                          color: T.muted,
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockMoveModal({
+  ing,
+  type,
+  staffName,
+  onClose,
+  onDone,
+}: {
+  ing: Ing;
+  type: "restock" | "waste" | "calibration" | "adjust";
+  staffName: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [qty, setQty] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const n = parseFloat(qty) || 0;
+  const needsNote = type !== "restock";
+  const valid = n > 0 && (!needsNote || note.trim().length > 0);
+
+  const TITLES = {
+    restock: "RESTOCK",
+    waste: "LOG WASTE",
+    calibration: "CALIBRATION LOSS",
+    adjust: "PHYSICAL RECOUNT",
+  } as const;
+  const HINTS = {
+    restock: `Adding to the drawer. One full container = ${ing.containerSize}${ing.unit}.`,
+    waste: "Spilled, expired, remade drink, dropped shot — required note.",
+    calibration:
+      "Purge shots, grinder dial-in, line flush — keeps the count honest.",
+    adjust:
+      "Enter how much you're writing OFF after counting the actual shelf.",
+  } as const;
+
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", fn);
+    return () => window.removeEventListener("keydown", fn);
+  }, [onClose]);
+
+  async function submit() {
+    if (!valid) return;
+    setSaving(true);
+    try {
+      const r = await fetch("/api/inventory/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ingredientId: ing._id,
+          type,
+          qty: n,
+          note: note.trim(),
+        }),
+      });
+      if (r.ok) onDone();
+      else alert("Failed to save stock movement.");
+    } catch {
+      alert("Network error.");
+    }
+    setSaving(false);
+  }
+
+  const after = type === "restock" ? ing.stock + n : ing.stock - n;
+  const afterPct = ing.capacity > 0 ? (after / ing.capacity) * 100 : 0;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 3000,
+        background: "rgba(0,0,0,0.8)",
+        backdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "0 16px",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="modal-inner"
+        style={{
+          background: "#13180f",
+          border: `1px solid ${T.borderH}`,
+          borderRadius: 18,
+          padding: "clamp(20px,5vw,28px) clamp(16px,4vw,24px)",
+          maxWidth: 380,
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          maxHeight: "90svh",
+          overflowY: "auto",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.8)",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <p
+            style={{
+              fontFamily: "'Cinzel',serif",
+              color: T.cream,
+              fontSize: 14,
+              letterSpacing: ".1em",
+            }}
+          >
+            {TITLES[type]}
+          </p>
+          <p style={{ color: T.gold, fontSize: 13, marginTop: 4 }}>
+            {ing.name}
+          </p>
+          <p
+            style={{
+              color: T.muted,
+              fontSize: 11,
+              marginTop: 6,
+              lineHeight: 1.5,
+            }}
+          >
+            {HINTS[type]}
+          </p>
+        </div>
+
+        {type === "restock" && (
+          <div style={{ display: "flex", gap: 6 }}>
+            {[1, 2, 3].map((c) => (
+              <button
+                key={c}
+                onClick={() => setQty(String(ing.containerSize * c))}
+                style={{
+                  flex: 1,
+                  padding: "8px 0",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background: "rgba(212,168,67,0.08)",
+                  border: `1px solid ${T.border}`,
+                  color: T.gold,
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                {c}× ({ing.containerSize * c}
+                {ing.unit})
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div>
+          <label
+            style={{
+              color: T.muted,
+              fontSize: 10,
+              letterSpacing: ".1em",
+              display: "block",
+              marginBottom: 6,
+            }}
+          >
+            QTY ({ing.unit})
+          </label>
+          <input
+            type="number"
+            inputMode="decimal"
+            autoFocus
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            placeholder="0"
+            style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.04)",
+              border: `1px solid ${T.borderH}`,
+              borderRadius: 10,
+              padding: "12px 14px",
+              color: T.cream,
+              fontSize: 22,
+              fontFamily: "'Cinzel',serif",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            style={{
+              color: T.muted,
+              fontSize: 10,
+              letterSpacing: ".1em",
+              display: "block",
+              marginBottom: 6,
+            }}
+          >
+            NOTE {needsNote ? "— REQUIRED" : "(optional)"}
+          </label>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={
+              type === "waste"
+                ? "e.g. remade latte, wrong order"
+                : type === "calibration"
+                  ? "e.g. morning dial-in, 3 purge shots"
+                  : type === "adjust"
+                    ? "e.g. shelf count vs system"
+                    : "e.g. delivery from supplier"
+            }
+            style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.04)",
+              border: `1px solid ${needsNote && !note.trim() ? "rgba(239,68,68,0.35)" : T.border}`,
+              borderRadius: 8,
+              padding: "9px 12px",
+              color: T.cream,
+              fontSize: 13,
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        {n > 0 && (
+          <div
+            style={{
+              background: "rgba(255,255,255,0.03)",
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              padding: "10px 14px",
+              display: "flex",
+              justifyContent: "space-between",
+            }}
+          >
+            <span style={{ color: T.muted, fontSize: 12 }}>After this</span>
+            <span
+              style={{
+                color: afterPct <= ing.lowPct ? T.red : T.green,
+                fontSize: 13,
+                fontWeight: 700,
+                fontFamily: "'Cinzel',serif",
+              }}
+            >
+              {Math.round(after)}
+              {ing.unit} · {Math.round(afterPct)}%
+            </span>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={submit}
+            disabled={!valid || saving}
+            style={{
+              flex: 1,
+              padding: 12,
+              borderRadius: 10,
+              border: "none",
+              background: valid
+                ? type === "restock"
+                  ? T.green
+                  : T.gold
+                : "rgba(255,255,255,0.05)",
+              color: valid ? "#0a0f0a" : T.muted,
+              fontFamily: "'Cinzel',serif",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: ".08em",
+              cursor: valid && !saving ? "pointer" : "not-allowed",
+            }}
+          >
+            {saving ? "SAVING…" : "CONFIRM"}
+          </button>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "12px 18px",
+              background: "rgba(255,255,255,0.05)",
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              color: T.muted,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -9782,6 +11170,7 @@ function AnalyticsTab({
       .finally(() => setHistoryLoading(false));
   }, [analyticsView, historyDayKey, isViewingToday]);
   const displayedReports = isViewingToday ? shiftReports : pastReports;
+
   const historyDateLabel = (() => {
     const [y, m, d] = historyDayKey.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString("en-PH", {
@@ -17132,8 +18521,88 @@ export default function AdminDashboard() {
   const w = useWindowWidth();
   const isMobile = w < 640;
   const isSmall = w < 400;
+  const isTabCompact = w < 1100;
 
   const [tab, setTab] = useState<Tab>("orders");
+
+  // ── Developer mode ────────────────────────────────────────────────────────
+  // Hidden from staff. Unlock = tap the "3RD SPACE" logo 5x, then enter the
+  // password (checked server-side at /api/dev-unlock). The flag lives only in
+  // THIS browser's localStorage, so staff devices never see the new UI.
+  const [devMode, setDevMode] = useState(false);
+  const [showDevPrompt, setShowDevPrompt] = useState(false);
+  const [devPw, setDevPw] = useState("");
+  const [devErr, setDevErr] = useState("");
+  const [devBusy, setDevBusy] = useState(false);
+  const logoTaps = useRef<number[]>([]);
+  const devModeRef = useRef(false);
+  useEffect(() => {
+    devModeRef.current = devMode;
+  }, [devMode]);
+  useEffect(() => {
+    try {
+      setDevMode(localStorage.getItem("3s_dev") === "1");
+    } catch {}
+  }, []);
+  // Desktop shortcut: Alt+Shift+D opens the password box.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && e.shiftKey && e.code === "KeyD") {
+        e.preventDefault();
+        setDevPw("");
+        setDevErr("");
+        setShowDevPrompt(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  function onLogoTap() {
+    const now = Date.now();
+    logoTaps.current = [...logoTaps.current.filter((t) => now - t < 3000), now];
+    if (logoTaps.current.length >= 5) {
+      logoTaps.current = [];
+      if (devMode) return;
+      setDevPw("");
+      setDevErr("");
+      setShowDevPrompt(true);
+    }
+  }
+  async function submitDevPw() {
+    if (!devPw || devBusy) return;
+    setDevBusy(true);
+    setDevErr("");
+    try {
+      const r = await fetch("/api/dev-unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: devPw.trim() }),
+      });
+      if (r.ok) {
+        try {
+          localStorage.setItem("3s_dev", "1");
+        } catch {}
+        setDevMode(true);
+        setShowDevPrompt(false);
+      } else if (r.status === 404) {
+        setDevErr("Route missing: create src/app/api/dev-unlock/route.ts");
+      } else if (r.status === 503) {
+        setDevErr("DEV_PASSWORD isn't set on the server (restart npm run dev)");
+      } else {
+        setDevErr("Wrong password");
+      }
+    } catch {
+      setDevErr("Couldn't reach server");
+    }
+    setDevBusy(false);
+  }
+  function exitDevMode() {
+    try {
+      localStorage.removeItem("3s_dev");
+    } catch {}
+    setDevMode(false);
+    setTab((t) => (t === "inventory" ? "orders" : t));
+  }
   // The poll effect below only depends on [role] (so the interval isn't
   // torn down/recreated every tab switch) — but that means fetchData's
   // closure would otherwise freeze on whatever `tab` was at mount time
@@ -17142,13 +18611,6 @@ export default function AdminDashboard() {
   const tabRef = useRef(tab);
   useEffect(() => {
     tabRef.current = tab;
-  }, [tab]);
-
-  // Fire an immediate poll whenever the tab changes, so switching to
-  // Crew/Menu doesn't sit empty until the next scheduled 25s interval.
-  useEffect(() => {
-    if (!role) return;
-    fetchData(true, tab);
   }, [tab]);
 
   // Fire an immediate poll whenever the tab changes, so switching to
@@ -17216,6 +18678,50 @@ export default function AdminDashboard() {
   const pendingMutationsRef = useRef<Set<string>>(new Set());
   const audioCtxRef = useRef<AudioContext | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [lowStock, setLowStock] = useState<
+    {
+      _id: string;
+      name: string;
+      unit: string;
+      stock: number;
+      pct: number;
+      out: boolean;
+    }[]
+  >([]);
+  const alertedIdsRef = useRef<Set<string>>(new Set());
+
+  // Distinct from the new-order chime: lower, repeating, unmistakable.
+  const playStockAlarm = useRef<() => void>(() => {});
+  useEffect(() => {
+    playStockAlarm.current = () => {
+      try {
+        const ctx =
+          audioCtxRef.current ||
+          new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = ctx;
+        if (ctx.state === "suspended") ctx.resume();
+        const buzz = (start: number) => {
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.connect(g);
+          g.connect(ctx.destination);
+          o.type = "square";
+          o.frequency.value = 440;
+          g.gain.setValueAtTime(0.25, ctx.currentTime + start);
+          g.gain.exponentialRampToValueAtTime(
+            0.001,
+            ctx.currentTime + start + 0.35,
+          );
+          o.start(ctx.currentTime + start);
+          o.stop(ctx.currentTime + start + 0.4);
+        };
+        buzz(0);
+        buzz(0.45);
+        buzz(0.9);
+      } catch {}
+    };
+  }, []);
 
   useEffect(() => {
     const unlock = () => {
@@ -17754,7 +19260,29 @@ export default function AdminDashboard() {
         menuItems: fetchedMenu,
         shopStatus: s,
         cashLog,
+        lowStock: low,
       } = await res.json();
+
+      if (Array.isArray(low)) {
+        // Only alarm for items that weren't already low on the previous tick —
+        // otherwise a single low ingredient would buzz every 25s all shift.
+        const fresh = low.filter(
+          (i: { _id: string }) => !alertedIdsRef.current.has(i._id),
+        );
+        if (fresh.length > 0 && devModeRef.current) {
+          playStockAlarm.current();
+          showToast(
+            `⚠ LOW STOCK: ${fresh
+              .map(
+                (f: { name: string; pct: number }) => `${f.name} (${f.pct}%)`,
+              )
+              .join(", ")}`,
+            false,
+          );
+        }
+        alertedIdsRef.current = new Set(low.map((i: { _id: string }) => i._id));
+        setLowStock(low);
+      }
 
       // Only update if this poll actually asked for menu data (see needsMenu
       // above) — otherwise keep whatever's already in state.
@@ -18355,13 +19883,23 @@ export default function AdminDashboard() {
       adminOnly: true,
     },
     {
+      id: "inventory",
+      label: "Inventory",
+      icon: <Boxes size={15} />,
+      adminOnly: true,
+    },
+    {
       id: "accounts",
       label: "Accounts",
       icon: <Users size={15} />,
       adminOnly: true,
     },
   ];
-  const TABS = isAdmin ? ALL_TABS : ALL_TABS.filter((t) => !t.adminOnly);
+  const TABS = (
+    isAdmin ? ALL_TABS : ALL_TABS.filter((t) => !t.adminOnly)
+  ).filter(
+    (t) => t.id !== "inventory" || devMode, // Inventory is dev-only until tested
+  );
 
   return (
     <div style={{ minHeight: "100svh", background: "#0a0f0a", color: T.cream }}>
@@ -18435,10 +19973,33 @@ export default function AdminDashboard() {
               fontWeight: 700,
               color: T.cream,
               letterSpacing: ".15em",
+              cursor: "default",
+              userSelect: "none",
+              WebkitUserSelect: "none",
             }}
+            onClick={onLogoTap}
           >
             3RD SPACE
           </span>
+          {devMode && isAdmin && (
+            <button
+              onClick={exitDevMode}
+              title="Developer mode ON — click to turn off"
+              style={{
+                padding: "2px 8px",
+                borderRadius: 20,
+                cursor: "pointer",
+                background: "rgba(139,92,246,0.15)",
+                border: "1px solid rgba(139,92,246,0.5)",
+                color: "#a78bfa",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: ".1em",
+              }}
+            >
+              DEV ✕
+            </button>
+          )}
           <div
             style={{
               background: isAdmin
@@ -18720,6 +20281,71 @@ export default function AdminDashboard() {
         </div>
       </header>
 
+      {devMode && lowStock.length > 0 && (
+        <div
+          style={{
+            position: "sticky",
+            top: 56,
+            zIndex: 199,
+            background: "rgba(239,68,68,0.12)",
+            borderBottom: "1px solid rgba(239,68,68,0.4)",
+            padding: "9px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <AlertCircle size={15} color={T.red} />
+          <span
+            style={{
+              color: T.red,
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: "'Cinzel',serif",
+              letterSpacing: ".06em",
+            }}
+          >
+            LOW STOCK
+          </span>
+          {lowStock.map((i) => (
+            <span
+              key={i._id}
+              style={{
+                fontSize: 11,
+                color: i.out ? "#fff" : T.red,
+                background: i.out ? T.red : "rgba(239,68,68,0.1)",
+                border: "1px solid rgba(239,68,68,0.3)",
+                borderRadius: 6,
+                padding: "3px 10px",
+                fontWeight: 600,
+              }}
+            >
+              {i.name} — {i.out ? "OUT" : `${i.pct}% · ${i.stock}${i.unit}`}
+            </span>
+          ))}
+          {isAdmin && (
+            <button
+              onClick={() => setTab("inventory")}
+              style={{
+                marginLeft: "auto",
+                background: "rgba(239,68,68,0.15)",
+                border: "1px solid rgba(239,68,68,0.45)",
+                borderRadius: 6,
+                color: T.red,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "5px 12px",
+                cursor: "pointer",
+              }}
+            >
+              RESTOCK →
+            </button>
+          )}
+        </div>
+      )}
+
       <div
         className="dash-content"
         style={{
@@ -18766,10 +20392,13 @@ export default function AdminDashboard() {
         <div
           style={{
             display: "flex",
-            gap: isMobile ? 4 : 6,
+            gap: isMobile ? 4 : 2,
             marginBottom: isMobile ? 16 : 22,
             borderBottom: `1px solid ${T.border}`,
-            overflowX: "auto",
+            // Every tab keeps its label. On desktop the row wraps instead of
+            // clipping; on phones it scrolls sideways.
+            flexWrap: isMobile ? "nowrap" : "wrap",
+            overflowX: isMobile ? "auto" : "visible",
             scrollbarWidth: "none",
           }}
         >
@@ -18779,11 +20408,13 @@ export default function AdminDashboard() {
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
+                title={t.label}
+                aria-label={t.label}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: isMobile ? 5 : 7,
-                  padding: isMobile ? "9px 12px" : "10px 18px",
+                  gap: isMobile ? 5 : 6,
+                  padding: isMobile ? "9px 12px" : "10px 12px",
                   borderRadius: "8px 8px 0 0",
                   cursor: "pointer",
                   background: a ? "rgba(212,168,67,0.1)" : "transparent",
@@ -18800,19 +20431,15 @@ export default function AdminDashboard() {
                   color: a ? T.gold : T.muted,
                   fontFamily: "'Cinzel',serif",
                   fontSize: isMobile ? 10 : 11,
-                  letterSpacing: ".1em",
+                  letterSpacing: ".06em",
                   fontWeight: a ? 700 : 400,
                   transition: "all .15s",
                   whiteSpace: "nowrap",
                   flexShrink: 0,
                 }}
               >
-                {t.icon}
-                {!isSmall && (
-                  <span style={{ marginLeft: isSmall ? 0 : 5 }}>
-                    {t.label.toUpperCase()}
-                  </span>
-                )}
+                <span style={{ display: "flex" }}>{t.icon}</span>
+                {!isSmall && <span>{t.label.toUpperCase()}</span>}
               </button>
             );
           })}
@@ -18980,7 +20607,11 @@ export default function AdminDashboard() {
             discounts={discounts}
           />
         ) : tab === "menu" ? (
-          <MenuTab items={menuItems} onRefresh={() => fetchData(true)} />
+          <MenuTab
+            items={menuItems}
+            onRefresh={() => fetchData(true)}
+            devMode={devMode}
+          />
         ) : tab === "analytics" ? (
           <AnalyticsTab
             orders={orders}
@@ -19003,10 +20634,111 @@ export default function AdminDashboard() {
             discounts={discounts}
             setDiscounts={setDiscounts}
           />
+        ) : tab === "inventory" && devMode ? (
+          <InventoryTab
+            menuItems={menuItems}
+            staffName={staffName}
+            onChanged={() => fetchData(true)}
+            devMode={devMode}
+          />
         ) : (
           <AccountsTab />
         )}
       </div>
+
+      {showDevPrompt && (
+        <div
+          onClick={() => setShowDevPrompt(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(0,0,0,0.75)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 320,
+              background: "#0f1a0f",
+              border: `1px solid ${T.borderH}`,
+              borderRadius: 14,
+              padding: 20,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <p
+              style={{
+                color: T.gold,
+                fontFamily: "'Cinzel',serif",
+                fontSize: 12,
+                letterSpacing: ".15em",
+              }}
+            >
+              DEVELOPER ACCESS
+            </p>
+            <input
+              type="password"
+              autoFocus
+              value={devPw}
+              onChange={(e) => setDevPw(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitDevPw()}
+              placeholder="Password"
+              style={{
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${T.border}`,
+                color: T.cream,
+                fontSize: 14,
+                outline: "none",
+              }}
+            />
+            {devErr && <p style={{ color: T.red, fontSize: 12 }}>{devErr}</p>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={submitDevPw}
+                disabled={devBusy}
+                style={{
+                  flex: 1,
+                  padding: "9px 0",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background: T.gold,
+                  border: "none",
+                  color: "#0a0f0a",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  opacity: devBusy ? 0.6 : 1,
+                }}
+              >
+                {devBusy ? "Checking..." : "Unlock"}
+              </button>
+              <button
+                onClick={() => setShowDevPrompt(false)}
+                style={{
+                  padding: "9px 14px",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background: "rgba(255,255,255,0.05)",
+                  border: `1px solid ${T.border}`,
+                  color: T.muted,
+                  fontSize: 12,
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showShiftOptions && (
         <div

@@ -15,3 +15,12 @@ export async function connectDB() {
   cached.conn = await cached.promise;
   return cached.conn;
 }
+
+// Native MongoDB driver access, for code that talks to collections directly
+// (e.g. lib/inventory.ts) instead of through Mongoose models.
+export async function getDb() {
+  await connectDB();
+  const db = mongoose.connection.db;
+  if (!db) throw new Error("Mongoose connection has no db instance");
+  return db;
+}

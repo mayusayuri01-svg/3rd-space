@@ -5,6 +5,8 @@ import { MenuItem } from "@/models/MenuItem";
 import { Setting } from "@/lib/models/Setting";
 import { verifySession } from "@/lib/auth";
 import { NextRequest } from "next/server";
+import { getDb } from "@/lib/mongodb";
+import { PCT } from "@/lib/inventory";
 
 // Combined poll endpoint for the admin dashboard's recurring refresh loop.
 // Previously each poll tick fired 4 separate serverless invocations
@@ -38,7 +40,9 @@ export async function GET(req: NextRequest) {
 
   const includeMenu = req.nextUrl.searchParams.get("menu") !== "0";
 
-  const [orders, shopDoc, menuItems] = await Promise.all([
+  const db = await getDb();
+
+  const [orders, shopDoc, menuItems, ingredients] = await Promise.all([
     Order.find({
       archived: { $ne: true },
       $or: [
@@ -55,7 +59,22 @@ export async function GET(req: NextRequest) {
     includeMenu
       ? MenuItem.find().sort({ category: 1, createdAt: 1 }).lean()
       : Promise.resolve(null),
+    db
+      .collection("ingredients")
+      .find({ active: { $ne: false } })
+      .toArray(),
   ]);
+
+  const lowStock = ingredients
+    .filter((i: any) => PCT(i) <= (i.lowPct ?? 15))
+    .map((i: any) => ({
+      _id: String(i._id),
+      name: i.name,
+      unit: i.unit,
+      stock: Math.round(i.stock * 10) / 10,
+      pct: Math.round(PCT(i) * 10) / 10,
+      out: i.stock <= 0,
+    }));
 
   const doc = shopDoc as any;
   const paidIn = doc?.paidIn ?? [];
@@ -80,5 +99,6 @@ export async function GET(req: NextRequest) {
       startingCash: doc?.startingCash ?? null,
     },
     cashLog: { paidInTotal, paidOutTotal },
+    lowStock,
   });
 }

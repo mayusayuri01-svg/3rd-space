@@ -120,6 +120,7 @@ const OrderSchema = new Schema(
       ref: "ShiftReport",
       default: null,
     },
+    stockApplied: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

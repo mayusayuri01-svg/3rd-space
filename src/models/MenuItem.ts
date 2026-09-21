@@ -19,6 +19,14 @@ const OptionGroupSchema = new Schema(
   { _id: false },
 );
 
+const RecipeLineSchema = new Schema(
+  {
+    ingredientId: { type: String, required: true },
+    qty: { type: Number, required: true },
+  },
+  { _id: false },
+);
+
 const MenuItemSchema = new Schema(
   {
     name: { type: String, required: true },
@@ -30,6 +38,8 @@ const MenuItemSchema = new Schema(
     variants: { type: [String], default: [] },
     options: { type: [OptionGroupSchema], default: [] },
     cost: { type: Number, default: null },
+    recipe: { type: [RecipeLineSchema], default: [] },
+    optionRecipe: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },
 );

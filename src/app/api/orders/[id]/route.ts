@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import { Order } from "@/models/Order";
 import { deleteFromR2 } from "@/lib/r2";
 import { notifyClients } from "@/lib/sse";
+import { movesForOrder, applyMoves } from "@/lib/inventory"; // add this import
 import mongoose from "mongoose";
 
 const ShiftReportSchema = new mongoose.Schema({}, { strict: false });
@@ -226,6 +227,13 @@ export async function PATCH(
       stampUpdate.paidAt = new Date();
     }
 
+    // Need the pre-update doc to detect the transition (prevStatus -> completed)
+    const prevOrder = await Order.findById(id);
+    if (!prevOrder)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const prevStatus = prevOrder.status;
+    const prevStockApplied = prevOrder.stockApplied;
+
     const order = await Order.findByIdAndUpdate(id, stampUpdate, {
       new: true,
     });
@@ -237,6 +245,44 @@ export async function PATCH(
         await attributeToOriginalShift(id);
       } catch (attribErr) {
         console.error("[attributeToOriginalShift] failed", attribErr);
+      }
+    }
+
+    // ── Inventory deduction on completion ─────────────────────────
+    if (
+      body.status === "completed" &&
+      prevStatus !== "completed" &&
+      !prevStockApplied
+    ) {
+      try {
+        const moves = await movesForOrder(order);
+        await applyMoves(moves);
+        await Order.updateOne(
+          { _id: order._id },
+          { $set: { stockApplied: true } },
+        );
+      } catch (invErr) {
+        console.error("[inventory] deduction failed", invErr);
+        // never block the order flow on inventory
+      }
+    }
+
+    // ── Inventory reversal on cancellation after completion ───────
+    if (body.status === "cancelled" && prevStockApplied) {
+      try {
+        const moves = (await movesForOrder(order)).map((m) => ({
+          ...m,
+          qty: -m.qty,
+          type: "adjust" as const,
+          note: "order cancelled",
+        }));
+        await applyMoves(moves);
+        await Order.updateOne(
+          { _id: order._id },
+          { $set: { stockApplied: false } },
+        );
+      } catch (invErr) {
+        console.error("[inventory] reversal failed", invErr);
       }
     }
 
