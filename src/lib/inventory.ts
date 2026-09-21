@@ -46,14 +46,22 @@ export async function applyMoves(
 // Resolve a completed order's items -> ingredient deductions
 export async function movesForOrder(order: any) {
   const db = await getDb();
-  const menu = await db.collection("menu").find({}).toArray();
+  // Mongoose model "MenuItem" is stored in the "menuitems" collection
+  // (was "menu", which is a different/empty collection → no deductions).
+  const menu = await db.collection("menuitems").find({}).toArray();
   const ings = await db.collection("ingredients").find({}).toArray();
   const byId = new Map(ings.map((i: any) => [String(i._id), i]));
   const acc = new Map<string, number>();
 
   const add = (id: string, qty: number) => {
     const ing = byId.get(id);
-    if (!ing) return;
+    if (!ing) {
+      console.log(
+        "[inventory] recipe ingredientId not found in ingredients:",
+        id,
+      );
+      return;
+    }
     const waste = 1 + (ing.wastePct || 0) / 100; // calibration allowance
     acc.set(id, (acc.get(id) || 0) + qty * waste);
   };
@@ -68,7 +76,17 @@ export async function movesForOrder(order: any) {
       (m: any) =>
         m.name.toLowerCase() === base || base.startsWith(m.name.toLowerCase()),
     );
-    if (!mi) continue;
+    if (!mi) {
+      console.log(
+        "[inventory] no menu match for order item:",
+        it.name,
+        "| menu items loaded:",
+        menu.length,
+      );
+      continue;
+    }
+    if (!(mi.recipe || []).length)
+      console.log("[inventory] menu item has NO recipe:", mi.name);
 
     for (const r of mi.recipe || [])
       add(String(r.ingredientId), r.qty * it.quantity);
@@ -80,6 +98,13 @@ export async function movesForOrder(order: any) {
     }
   }
 
+  console.log(
+    "[inventory] moves for order",
+    String(order._id),
+    "=>",
+    acc.size,
+    "ingredient(s)",
+  );
   return Array.from(acc.entries()).map(([ingredientId, qty]) => ({
     ingredientId,
     type: "sale" as const,

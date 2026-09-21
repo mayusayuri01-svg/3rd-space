@@ -1,3 +1,4 @@
+// src/app/api/menu/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import { MenuItem } from "@/models/MenuItem";
@@ -26,13 +27,15 @@ export async function PATCH(
       "available",
       "variants",
       "options",
+      "recipe", // ← was missing: recipe edits were silently dropped
+      "optionRecipe",
     ];
     const update: Record<string, any> = {};
     for (const key of allowed) {
       if (key in body) update[key] = body[key];
     }
 
-    const item = await MenuItem.findByIdAndUpdate(id, update, { new: true }); // also: use `new` not `returnDocument`
+    const item = await MenuItem.findByIdAndUpdate(id, update, { new: true });
     if (!item)
       return NextResponse.json({ error: "Not found" }, { status: 404 });
 
