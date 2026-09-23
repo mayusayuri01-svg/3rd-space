@@ -149,9 +149,10 @@ export async function PATCH(
 
     // ── Per-item discount apply/remove ──────────────────────────────
     // body: { itemDiscount: { itemIndex, discountName, discountPct } }
+    // or:   { itemDiscount: { itemIndex, discountName, discountFixed } }
     // or:   { itemDiscount: { itemIndex, remove: true } }
     if (body.itemDiscount) {
-      const { itemIndex, discountName, discountPct, remove } =
+      const { itemIndex, discountName, discountPct, discountFixed, remove } =
         body.itemDiscount;
 
       // Retry loop handles the rare case of a genuine concurrent write
@@ -175,6 +176,12 @@ export async function PATCH(
           item.discountName = undefined;
           item.discountPct = undefined;
           item.discountAmount = undefined;
+        } else if (discountFixed != null) {
+          const lineTotal = item.price * item.quantity;
+          const amount = Math.min(discountFixed, lineTotal);
+          item.discountName = discountName;
+          item.discountPct = undefined;
+          item.discountAmount = amount;
         } else {
           const lineTotal = item.price * item.quantity;
           const amount = Math.round(lineTotal * discountPct) / 100;

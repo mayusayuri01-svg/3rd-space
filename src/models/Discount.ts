@@ -3,7 +3,14 @@ import mongoose, { Schema, model, models } from "mongoose";
 const DiscountSchema = new Schema(
   {
     name: { type: String, required: true },
-    percentage: { type: Number, required: true, min: 1, max: 100 },
+    type: {
+      type: String,
+      enum: ["percentage", "fixed"],
+      required: true,
+      default: "percentage",
+    },
+    percentage: { type: Number, min: 1, max: 100 },
+    amountOff: { type: Number, min: 1 },
   },
   { timestamps: true },
 );

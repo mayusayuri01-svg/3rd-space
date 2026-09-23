@@ -23,9 +23,18 @@ export async function POST(req: NextRequest) {
   if (authError) return authError;
 
   await connectDB();
-  const { name, percentage } = await req.json();
-  if (!name || !percentage)
+  const { name, type, percentage, amountOff } = await req.json();
+  const discountType = type === "fixed" ? "fixed" : "percentage";
+  if (!name)
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
-  const discount = await Discount.create({ name, percentage });
+  if (discountType === "percentage" && !percentage)
+    return NextResponse.json({ error: "Missing percentage" }, { status: 400 });
+  if (discountType === "fixed" && !amountOff)
+    return NextResponse.json({ error: "Missing amount" }, { status: 400 });
+  const discount = await Discount.create({
+    name,
+    type: discountType,
+    ...(discountType === "percentage" ? { percentage } : { amountOff }),
+  });
   return NextResponse.json(discount, { status: 201 });
 }

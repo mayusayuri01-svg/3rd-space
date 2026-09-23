@@ -232,8 +232,18 @@ type OrderItem = {
 type DiscountPreset = {
   _id: string;
   name: string;
-  percentage: number;
+  type?: "percentage" | "fixed";
+  percentage?: number;
+  amountOff?: number;
 };
+
+function discountAmountFor(d: DiscountPreset, subtotal: number): number {
+  if (d.type === "fixed") return Math.min(d.amountOff || 0, subtotal);
+  return Math.round(subtotal * (d.percentage || 0)) / 100;
+}
+function discountLabel(d: DiscountPreset): string {
+  return d.type === "fixed" ? `₱${d.amountOff} off` : `${d.percentage}% off`;
+}
 
 type Order = {
   _id: string;
@@ -325,6 +335,8 @@ type DailyReport = {
   items: Record<string, { qty: number; revenue: number }>;
   orders: Order[];
   startingCash?: number;
+  paidIn?: { amount: number; note: string; loggedBy?: string; at: string }[];
+  paidOut?: { amount: number; note: string; loggedBy?: string; at: string }[];
   paidInTotal?: number;
   paidOutTotal?: number;
   countedCash?: number | null;
@@ -348,6 +360,8 @@ type ShiftReport = {
   countedCash: number | null;
   cashDiff: number | null;
   items: Record<string, { qty: number; revenue: number }>;
+  paidIn?: { amount: number; note: string; loggedBy?: string; at: string }[];
+  paidOut?: { amount: number; note: string; loggedBy?: string; at: string }[];
   paidInTotal?: number;
   paidOutTotal?: number;
   discountTotal?: number;
@@ -3409,6 +3423,7 @@ function OrderCard({
     itemIndex: number,
     name: string,
     pct: number,
+    fixedAmount?: number,
   ) => Promise<void>;
   onRemoveItemDiscount: (id: string, itemIndex: number) => Promise<void>;
   discounts: DiscountPreset[];
@@ -4430,7 +4445,12 @@ function OrderCard({
                                                 order._id,
                                                 i,
                                                 d.name,
-                                                d.percentage,
+                                                d.type === "fixed"
+                                                  ? -1
+                                                  : d.percentage || 0,
+                                                d.type === "fixed"
+                                                  ? d.amountOff
+                                                  : undefined,
                                               );
                                               setOpenItemDiscountIdx(null);
                                             }}
@@ -4455,7 +4475,7 @@ function OrderCard({
                                                 fontWeight: 700,
                                               }}
                                             >
-                                              {d.percentage}%
+                                              {discountLabel(d)}
                                             </span>
                                           </button>
                                         ))}
@@ -9139,6 +9159,10 @@ function SalesCalendar({
                       </p>
                     </div>
                   )}
+                  <CashEntriesList
+                    paidIn={selectedStats.report.paidIn}
+                    paidOut={selectedStats.report.paidOut}
+                  />
                   <div
                     style={{
                       background: T.bgCard,
@@ -14428,7 +14452,7 @@ function CrewTab({
     0,
   );
   const discountAmount = selectedDiscount
-    ? Math.round(cartSubtotal * selectedDiscount.percentage) / 100
+    ? discountAmountFor(selectedDiscount, cartSubtotal)
     : 0;
   const cartTotal = cartSubtotal - discountAmount;
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
@@ -15474,7 +15498,7 @@ function CrewTab({
                             transition: "all 0.15s",
                           }}
                         >
-                          {d.name} · {d.percentage}% off
+                          {d.name} · {discountLabel(d)}
                         </button>
                       );
                     })}
@@ -16525,24 +16549,41 @@ function DiscountsAdminTab({
   setDiscounts: React.Dispatch<React.SetStateAction<DiscountPreset[]>>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", percentage: "" });
+  const [form, setForm] = useState({
+    name: "",
+    type: "percentage" as "percentage" | "fixed",
+    value: "",
+  });
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  function validForm() {
+    const v = parseFloat(form.value);
+    if (!form.name.trim() || isNaN(v) || v <= 0) return false;
+    if (form.type === "percentage" && v > 100) return false;
+    return true;
+  }
+
   async function addDiscount() {
-    const pct = parseFloat(form.percentage);
-    if (!form.name.trim() || isNaN(pct) || pct <= 0 || pct > 100) return;
+    if (!validForm()) return;
+    const v = parseFloat(form.value);
     setSaving(true);
     try {
       const res = await fetch("/api/discounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name.trim(), percentage: pct }),
+        body: JSON.stringify({
+          name: form.name.trim(),
+          type: form.type,
+          ...(form.type === "percentage"
+            ? { percentage: v }
+            : { amountOff: v }),
+        }),
       });
       if (res.ok) {
         const d = await res.json();
         setDiscounts((p) => [...p, d]);
-        setForm({ name: "", percentage: "" });
+        setForm({ name: "", type: "percentage", value: "" });
         setShowAdd(false);
       }
     } finally {
@@ -16551,14 +16592,19 @@ function DiscountsAdminTab({
   }
 
   async function updateDiscount(id: string) {
-    const pct = parseFloat(form.percentage);
-    if (!form.name.trim() || isNaN(pct) || pct <= 0 || pct > 100) return;
+    if (!validForm()) return;
+    const v = parseFloat(form.value);
     setSaving(true);
     try {
       const res = await fetch(`/api/discounts/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name.trim(), percentage: pct }),
+        body: JSON.stringify({
+          name: form.name.trim(),
+          type: form.type,
+          percentage: form.type === "percentage" ? v : undefined,
+          amountOff: form.type === "fixed" ? v : undefined,
+        }),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -16601,7 +16647,7 @@ function DiscountsAdminTab({
           onClick={() => {
             setShowAdd(true);
             setEditingId(null);
-            setForm({ name: "", percentage: "" });
+            setForm({ name: "", type: "percentage", value: "" });
           }}
           style={{
             background: T.goldDim,
@@ -16641,6 +16687,28 @@ function DiscountsAdminTab({
           >
             New Discount
           </p>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {(["percentage", "fixed"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setForm((p) => ({ ...p, type: t, value: "" }))}
+                style={{
+                  flex: 1,
+                  padding: "7px 0",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background:
+                    form.type === t ? T.goldDim : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${form.type === t ? T.gold : T.border}`,
+                  color: form.type === t ? T.gold : T.muted,
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                {t === "percentage" ? "% OFF" : "₱ OFF"}
+              </button>
+            ))}
+          </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <input
               value={form.name}
@@ -16660,21 +16728,24 @@ function DiscountsAdminTab({
             />
             <div style={{ position: "relative", flex: 1, minWidth: 90 }}>
               <input
-                value={form.percentage}
+                value={form.value}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, percentage: e.target.value }))
+                  setForm((p) => ({ ...p, value: e.target.value }))
                 }
                 placeholder="0"
                 type="number"
                 min="1"
-                max="100"
+                max={form.type === "percentage" ? 100 : undefined}
                 onWheel={(e) => e.currentTarget.blur()}
                 style={{
                   width: "100%",
                   background: "rgba(255,255,255,0.04)",
                   border: `1px solid ${T.border}`,
                   borderRadius: 8,
-                  padding: "9px 28px 9px 12px",
+                  padding:
+                    form.type === "percentage"
+                      ? "9px 28px 9px 12px"
+                      : "9px 12px 9px 22px",
                   color: T.cream,
                   fontSize: 13,
                   outline: "none",
@@ -16684,14 +16755,14 @@ function DiscountsAdminTab({
               <span
                 style={{
                   position: "absolute",
-                  right: 10,
+                  [form.type === "percentage" ? "right" : "left"]: 10,
                   top: "50%",
                   transform: "translateY(-50%)",
                   color: T.muted,
                   fontSize: 13,
                 }}
               >
-                %
+                {form.type === "percentage" ? "%" : "₱"}
               </span>
             </div>
             <button
@@ -16777,15 +16848,40 @@ function DiscountsAdminTab({
                       outline: "none",
                     }}
                   />
+                  <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                    {(["percentage", "fixed"] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() =>
+                          setForm((p) => ({ ...p, type: t, value: "" }))
+                        }
+                        style={{
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          background:
+                            form.type === t
+                              ? T.goldDim
+                              : "rgba(255,255,255,0.03)",
+                          border: `1px solid ${form.type === t ? T.gold : T.border}`,
+                          color: form.type === t ? T.gold : T.muted,
+                          fontSize: 10,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {t === "percentage" ? "%" : "₱"}
+                      </button>
+                    ))}
+                  </div>
                   <div style={{ position: "relative", flex: 1, minWidth: 80 }}>
                     <input
-                      value={form.percentage}
+                      value={form.value}
                       onChange={(e) =>
-                        setForm((p) => ({ ...p, percentage: e.target.value }))
+                        setForm((p) => ({ ...p, value: e.target.value }))
                       }
                       type="number"
                       min="1"
-                      max="100"
+                      max={form.type === "percentage" ? 100 : undefined}
                       onWheel={(e) => e.currentTarget.blur()}
                       style={{
                         width: "100%",
@@ -16809,7 +16905,7 @@ function DiscountsAdminTab({
                         fontSize: 12,
                       }}
                     >
-                      %
+                      {form.type === "percentage" ? "%" : "₱"}
                     </span>
                   </div>
                   <button
@@ -16866,14 +16962,17 @@ function DiscountsAdminTab({
                       flexShrink: 0,
                     }}
                   >
-                    {d.percentage}% off
+                    {discountLabel(d)}
                   </span>
                   <button
                     onClick={() => {
                       setEditingId(d._id);
                       setForm({
                         name: d.name,
-                        percentage: String(d.percentage),
+                        type: d.type === "fixed" ? "fixed" : "percentage",
+                        value: String(
+                          d.type === "fixed" ? d.amountOff : d.percentage,
+                        ),
                       });
                       setShowAdd(false);
                     }}
@@ -17491,6 +17590,121 @@ function OpenShiftModal({
 }
 
 // ── CASH LOG MODAL (Paid In / Paid Out) ──────────────────────────────────────
+function CashEntriesList({
+  paidIn = [],
+  paidOut = [],
+}: {
+  paidIn?: { amount: number; note: string; loggedBy?: string; at: string }[];
+  paidOut?: { amount: number; note: string; loggedBy?: string; at: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  const entries = [
+    ...paidIn.map((e) => ({ ...e, type: "in" as const })),
+    ...paidOut.map((e) => ({ ...e, type: "out" as const })),
+  ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+  if (!entries.length) return null;
+
+  return (
+    <div style={{ gridColumn: "1 / -1" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: "rgba(255,255,255,0.03)",
+          border: `1px solid ${T.border}`,
+          borderRadius: 8,
+          padding: "8px 12px",
+          cursor: "pointer",
+        }}
+      >
+        <span
+          style={{
+            color: T.muted,
+            fontSize: 9,
+            letterSpacing: ".1em",
+            fontFamily: "'Cinzel',serif",
+          }}
+        >
+          PAID IN / OUT · {entries.length}{" "}
+          {entries.length === 1 ? "ENTRY" : "ENTRIES"}
+        </span>
+        {open ? (
+          <ChevronUp size={13} color={T.muted} />
+        ) : (
+          <ChevronDown size={13} color={T.muted} />
+        )}
+      </button>
+
+      {open && (
+        <div
+          style={{
+            border: `1px solid ${T.border}`,
+            borderTop: "none",
+            borderRadius: "0 0 8px 8px",
+            overflow: "hidden",
+            maxHeight: 200,
+            overflowY: "auto",
+          }}
+        >
+          {entries.map((e, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: 10,
+                padding: "9px 12px",
+                borderTop: i === 0 ? "none" : `1px solid ${T.border}`,
+                background:
+                  i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <p
+                  style={{
+                    color: T.cream,
+                    fontSize: 12,
+                    lineHeight: 1.4,
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {e.note || (e.type === "out" ? "Paid out" : "Paid in")}
+                </p>
+                <p style={{ color: T.faint, fontSize: 10, marginTop: 2 }}>
+                  {e.loggedBy ? `${e.loggedBy} · ` : ""}
+                  {new Date(e.at).toLocaleTimeString("en-PH", {
+                    timeZone: "Asia/Manila",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </p>
+              </div>
+              <span
+                style={{
+                  color: e.type === "out" ? T.red : T.green,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {e.type === "out" ? "−" : "+"}
+                {fmt(e.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CashLogModal({
   onClose,
   staffName,
@@ -18874,6 +19088,7 @@ export default function AdminDashboard() {
     itemIndex: number,
     discountName: string,
     discountPct: number,
+    discountFixed?: number,
   ) {
     const busyKey = `${orderId}:${itemIndex}`;
     if (discountBusyRef.current.has(busyKey)) return;
@@ -18888,14 +19103,22 @@ export default function AdminDashboard() {
     pendingMutationsRef.current.add(orderId);
     const item = target.items[itemIndex];
     const lineTotal = item.price * item.quantity;
-    const discountAmount = Math.round(lineTotal * discountPct) / 100;
+    const isFixed = discountPct === -1 && discountFixed != null;
+    const discountAmount = isFixed
+      ? Math.min(discountFixed, lineTotal)
+      : Math.round(lineTotal * discountPct) / 100;
 
     setOrders((p) =>
       p.map((o) => {
         if (o._id !== orderId) return o;
         const items = o.items.map((it, i) =>
           i === itemIndex
-            ? { ...it, discountName, discountPct, discountAmount }
+            ? {
+                ...it,
+                discountName,
+                discountPct: isFixed ? undefined : discountPct,
+                discountAmount,
+              }
             : it,
         );
         const newTotal =
@@ -18907,13 +19130,19 @@ export default function AdminDashboard() {
         return { ...o, items, total: newTotal };
       }),
     );
-    showToast(`✓ ${discountPct}% discount applied to item`);
+    showToast(
+      isFixed
+        ? `✓ ₱${discountFixed} discount applied to item`
+        : `✓ ${discountPct}% discount applied to item`,
+    );
     try {
       const res = await fetch(`/api/orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          itemDiscount: { itemIndex, discountName, discountPct },
+          itemDiscount: isFixed
+            ? { itemIndex, discountName, discountFixed }
+            : { itemIndex, discountName, discountPct },
         }),
       });
       if (!res.ok) throw new Error();
